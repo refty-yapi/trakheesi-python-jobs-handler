@@ -22,8 +22,14 @@ MASTER_PROFILE = DATA_DIR / "trakheesi_browser_profile"
 
 # Global state for cleanup
 worker_processes: list[subprocess.Popen] = []
+worker_restarts: list[int] = []  # Restart count per worker
 num_workers = 0
 running = True
+visible_mode = False
+
+# Auto-restart settings
+restart_threshold = 100  # Min total jobs before checking
+min_success_rate = 80.0  # Min success rate % before restart
 
 
 async def setup_master_profile():
@@ -69,20 +75,29 @@ async def setup_master_profile():
     return True
 
 
+def clean_worker_profile(worker_id: int):
+    """Remove a single worker profile and log."""
+    profile_dir = DATA_DIR / f"trakheesi_browser_profile_{worker_id}"
+    if profile_dir.exists():
+        shutil.rmtree(profile_dir)
+
+    log_file = LOGS_DIR / f"worker_{worker_id}.log"
+    if log_file.exists():
+        log_file.unlink()
+
+
 def clean_worker_profiles(n: int):
     """Remove existing worker profiles and logs."""
     print(f"Cleaning up {n} worker profiles and logs...")
 
     for i in range(1, n + 1):
-        # Remove worker profile
-        profile_dir = DATA_DIR / f"trakheesi_browser_profile_{i}"
-        if profile_dir.exists():
-            shutil.rmtree(profile_dir)
+        clean_worker_profile(i)
 
-        # Remove worker log
-        log_file = LOGS_DIR / f"worker_{i}.log"
-        if log_file.exists():
-            log_file.unlink()
+
+def create_worker_profile(worker_id: int):
+    """Copy master profile to a single worker profile."""
+    worker_profile = DATA_DIR / f"trakheesi_browser_profile_{worker_id}"
+    shutil.copytree(MASTER_PROFILE, worker_profile)
 
 
 def create_worker_profiles(n: int):
@@ -90,41 +105,76 @@ def create_worker_profiles(n: int):
     print(f"Creating {n} worker profiles...")
 
     for i in range(1, n + 1):
-        worker_profile = DATA_DIR / f"trakheesi_browser_profile_{i}"
         print(f"  Copying to profile {i}...")
-        shutil.copytree(MASTER_PROFILE, worker_profile)
+        create_worker_profile(i)
+
+
+def start_single_worker(worker_id: int, visible: bool) -> subprocess.Popen:
+    """Start a single worker subprocess."""
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    log_file = LOGS_DIR / f"worker_{worker_id}.log"
+    cmd = [
+        sys.executable,
+        str(SCRIPT_DIR / "trakheesi_worker.py"),
+        "--profile",
+        "--worker-id", str(worker_id),
+    ]
+    if visible:
+        cmd.append("--visible")
+
+    with open(log_file, "w") as f:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            cwd=str(SCRIPT_DIR),
+        )
+    return proc
 
 
 def start_workers(n: int, visible: bool) -> list[subprocess.Popen]:
     """Start worker subprocesses."""
-    global worker_processes
-
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    global worker_processes, worker_restarts
 
     processes = []
+    restarts = []
     for i in range(1, n + 1):
-        log_file = LOGS_DIR / f"worker_{i}.log"
-        cmd = [
-            sys.executable,
-            str(SCRIPT_DIR / "trakheesi_worker.py"),
-            "--profile",
-            "--worker-id", str(i),
-        ]
-        if visible:
-            cmd.append("--visible")
-
-        with open(log_file, "w") as f:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                cwd=str(SCRIPT_DIR),
-            )
-            processes.append(proc)
-            print(f"  Started worker {i} (PID {proc.pid})")
+        proc = start_single_worker(i, visible)
+        processes.append(proc)
+        restarts.append(0)
+        print(f"  Started worker {i} (PID {proc.pid})")
 
     worker_processes = processes
+    worker_restarts = restarts
     return processes
+
+
+def restart_worker(worker_id: int):
+    """Restart a single worker (kill, clean profile, copy fresh, start)."""
+    global worker_processes, worker_restarts
+
+    idx = worker_id - 1  # 0-indexed
+
+    # Kill existing process
+    proc = worker_processes[idx]
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    # Clean and recreate profile
+    clean_worker_profile(worker_id)
+    create_worker_profile(worker_id)
+
+    # Start new process
+    new_proc = start_single_worker(worker_id, visible_mode)
+    worker_processes[idx] = new_proc
+    worker_restarts[idx] += 1
+
+    return new_proc
 
 
 def parse_log_stats(log_file: Path) -> tuple[int, int, float]:
@@ -154,8 +204,29 @@ def parse_log_stats(log_file: Path) -> tuple[int, int, float]:
         return 0, 0, 0.0
 
 
-def display_stats(n: int, start_time: float):
-    """Display monitoring stats table."""
+def check_and_restart_workers(n: int) -> list[int]:
+    """Check workers and restart any with poor performance. Returns list of restarted worker IDs."""
+    restarted = []
+
+    for i in range(1, n + 1):
+        log_file = LOGS_DIR / f"worker_{i}.log"
+        success, failed, _ = parse_log_stats(log_file)
+        total = success + failed
+
+        if total >= restart_threshold:
+            rate = (success * 100 / total) if total > 0 else 0.0
+            if rate < min_success_rate:
+                restart_worker(i)
+                restarted.append(i)
+
+    return restarted
+
+
+def display_stats(n: int, start_time: float) -> list[int]:
+    """Display monitoring stats table. Returns list of workers that were restarted."""
+    # Check and restart workers first
+    restarted = check_and_restart_workers(n)
+
     # Clear screen
     print("\033[2J\033[H", end="")
 
@@ -165,39 +236,51 @@ def display_stats(n: int, start_time: float):
 
     print("=== Trakheesi Master ===")
     print(f"Time: {time.strftime('%H:%M:%S')}  |  Elapsed: {elapsed_min}m {elapsed_sec_rem}s")
+    print(f"Auto-restart: total >= {restart_threshold} AND rate < {min_success_rate}%")
     print()
 
-    print("Worker | Success | Failed | Total | Rate   | Jobs/min")
-    print("-------|---------|--------|-------|--------|----------")
+    print("Worker | Success | Failed | Total | Rate   | Jobs/min | Restarts")
+    print("-------|---------|--------|-------|--------|----------|----------")
 
     total_success = 0
     total_failed = 0
+    total_restarts = 0
 
     for i in range(1, n + 1):
         log_file = LOGS_DIR / f"worker_{i}.log"
         success, failed, jobs_per_min = parse_log_stats(log_file)
         total = success + failed
         rate = (success * 100 / total) if total > 0 else 0.0
+        restarts = worker_restarts[i - 1]
 
-        print(f"W{i:<5} | {success:>7} | {failed:>6} | {total:>5} | {rate:>5.1f}% | {jobs_per_min:.1f}")
+        # Mark recently restarted workers
+        marker = " *" if i in restarted else ""
+        print(f"W{i:<5} | {success:>7} | {failed:>6} | {total:>5} | {rate:>5.1f}% | {jobs_per_min:>8.1f} | {restarts}{marker}")
 
         total_success += success
         total_failed += failed
+        total_restarts += restarts
 
-    print("-------|---------|--------|-------|--------|----------")
+    print("-------|---------|--------|-------|--------|----------|----------")
 
     grand_total = total_success + total_failed
     grand_rate = (total_success * 100 / grand_total) if grand_total > 0 else 0.0
     total_jobs_per_min = (grand_total * 60 / elapsed_sec) if elapsed_sec > 0 else 0.0
 
-    print(f"TOTAL  | {total_success:>7} | {total_failed:>6} | {grand_total:>5} | {grand_rate:>5.1f}% | {total_jobs_per_min:.1f}")
+    print(f"TOTAL  | {total_success:>7} | {total_failed:>6} | {grand_total:>5} | {grand_rate:>5.1f}% | {total_jobs_per_min:>8.1f} | {total_restarts}")
     print()
 
     # Check running workers
     alive = sum(1 for p in worker_processes if p.poll() is None)
     print(f"Running workers: {alive}/{n}")
+
+    if restarted:
+        print(f"Restarted: W{', W'.join(map(str, restarted))}")
+
     print()
     print("Press Ctrl+C to stop all workers")
+
+    return restarted
 
 
 def cleanup():
@@ -238,7 +321,7 @@ def signal_handler(signum, frame):
 
 
 async def main():
-    global num_workers
+    global num_workers, visible_mode, restart_threshold, min_success_rate
 
     parser = argparse.ArgumentParser(description="Trakheesi Master Process")
     parser.add_argument(
@@ -252,9 +335,24 @@ async def main():
         action="store_true",
         help="Show browser windows"
     )
+    parser.add_argument(
+        "--restart-threshold",
+        type=int,
+        default=100,
+        help="Min total jobs before checking for restart (default: 100)"
+    )
+    parser.add_argument(
+        "--min-rate",
+        type=float,
+        default=80.0,
+        help="Min success rate %% before restart (default: 80.0)"
+    )
 
     args = parser.parse_args()
     num_workers = args.workers
+    visible_mode = args.visible
+    restart_threshold = args.restart_threshold
+    min_success_rate = args.min_rate
 
     # Setup signal handler
     signal.signal(signal.SIGINT, signal_handler)
@@ -268,7 +366,7 @@ async def main():
 
     # Step 3: Start workers
     print(f"\nStarting {num_workers} workers...")
-    start_workers(num_workers, args.visible)
+    start_workers(num_workers, visible_mode)
 
     # Step 4: Monitor loop
     print("\nMonitoring workers...")

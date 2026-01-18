@@ -40,6 +40,16 @@ On first run, if no browser profile exists, a Chromium window will open. You can
 |--------|-------------|
 | `-n N`, `--workers N` | Number of workers (default: 5) |
 | `--visible` | Show browser windows |
+| `--restart-threshold N` | Min total jobs before checking restart (default: 100) |
+| `--min-rate N` | Min success rate % before restart (default: 80.0) |
+
+### Auto-Restart
+
+Workers are automatically restarted when:
+- Total jobs processed >= `--restart-threshold`
+- Success rate < `--min-rate`
+
+This helps maintain high throughput when anti-bot detection kicks in.
 
 ### Monitoring
 
@@ -48,13 +58,14 @@ The master process displays a live stats table:
 ```
 === Trakheesi Master ===
 Time: 17:30:00  |  Elapsed: 5m 30s
+Auto-restart: total >= 100 AND rate < 80.0%
 
-Worker | Success | Failed | Total | Rate   | Jobs/min
--------|---------|--------|-------|--------|----------
-W1     |     100 |      2 |   102 |  98.0% | 8.5
-W2     |      98 |      1 |    99 |  99.0% | 8.2
+Worker | Success | Failed | Total | Rate   | Jobs/min | Restarts
+-------|---------|--------|-------|--------|----------|----------
+W1     |     100 |      2 |   102 |  98.0% |      8.5 | 0
+W2     |      98 |      1 |    99 |  99.0% |      8.2 | 1
 ...
-TOTAL  |     490 |      8 |   498 |  98.4% | 41.5
+TOTAL  |     490 |      8 |   498 |  98.4% |     41.5 | 1
 
 Running workers: 5/5
 ```
