@@ -2,7 +2,21 @@
 
 Distributed web scraping system for Dubai Land Department Trakheesi data using Playwright with stealth mode.
 
-## Setup
+## Quick Install
+
+**Mac/Linux:**
+```bash
+curl -sL https://raw.githubusercontent.com/refty-yapi/trakheesi-python-jobs-handler/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/refty-yapi/trakheesi-python-jobs-handler/main/install.ps1 | iex
+```
+
+Installs to `~/trakheesi-workers` (no git required).
+
+## Manual Setup
 
 ```bash
 # Install uv (if not already installed)
