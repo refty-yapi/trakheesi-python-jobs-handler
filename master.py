@@ -205,7 +205,7 @@ def parse_log_stats(log_file: Path) -> tuple[int, int]:
         return 0, 0
 
     try:
-        content = log_file.read_text()
+        content = log_file.read_text(encoding="utf-8")
         success = content.count("✓")
         failed = content.count("✗")
         return success, failed
