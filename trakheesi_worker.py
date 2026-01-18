@@ -312,7 +312,9 @@ async def main():
 
     # Redirect stdout to log file if specified
     if args.log_file:
-        sys.stdout = open(args.log_file, "w", buffering=1)  # Line buffered
+        log_path = Path(args.log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        sys.stdout = open(log_path, "w", buffering=1)  # Line buffered
         sys.stderr = sys.stdout
 
     await run_worker(
