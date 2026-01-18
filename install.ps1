@@ -39,6 +39,5 @@ Write-Host ""
 Write-Host "=== Installation complete! ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "To run:"
-Write-Host "  cd $INSTALL_DIR"
 Write-Host "  uv run python master.py -n 5 --visible"
 Write-Host ""
