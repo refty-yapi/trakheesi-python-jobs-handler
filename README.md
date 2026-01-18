@@ -94,6 +94,18 @@ Press `Ctrl+C` to gracefully stop all workers. This will:
 - Remove worker profile directories
 - Keep the master profile intact
 
+If workers get stuck, kill them manually:
+
+**Mac/Linux:**
+```bash
+pkill -f trakheesi_worker
+```
+
+**Windows (PowerShell):**
+```powershell
+taskkill /F /IM python.exe
+```
+
 ## Manual Worker Control
 
 If you prefer to manage workers manually:
