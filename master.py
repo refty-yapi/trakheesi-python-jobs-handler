@@ -77,7 +77,7 @@ async def setup_master_profile():
     return True
 
 
-def clean_worker_profile(worker_id: int, retries: int = 3):
+def clean_worker_profile(worker_id: int, retries: int = 5):
     """Remove a single worker profile and log."""
     profile_dir = DATA_DIR / f"trakheesi_browser_profile_{worker_id}"
     if profile_dir.exists():
@@ -85,7 +85,7 @@ def clean_worker_profile(worker_id: int, retries: int = 3):
             try:
                 shutil.rmtree(profile_dir)
                 break
-            except OSError:
+            except (OSError, PermissionError):
                 if attempt < retries - 1:
                     time.sleep(2)  # Wait for browser to release files
                 else:
@@ -94,7 +94,14 @@ def clean_worker_profile(worker_id: int, retries: int = 3):
 
     log_file = LOGS_DIR / f"worker_{worker_id}.log"
     if log_file.exists():
-        log_file.unlink()
+        for attempt in range(retries):
+            try:
+                log_file.unlink()
+                break
+            except (OSError, PermissionError):
+                if attempt < retries - 1:
+                    time.sleep(1)  # Wait for process to release file
+                # Silently ignore on last attempt - file will be overwritten anyway
 
 
 def clean_worker_profiles(n: int):
@@ -182,10 +189,13 @@ def restart_worker(worker_id: int, current_success: int, current_failed: int):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass  # Process may be stuck, continue anyway
 
-    # Wait for browser to fully release files
-    time.sleep(2)
+    # Wait for browser and files to be fully released (longer on Windows)
+    time.sleep(3)
 
     # Clean and recreate profile
     clean_worker_profile(worker_id)
