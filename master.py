@@ -214,8 +214,12 @@ def parse_log_stats(log_file: Path) -> tuple[int, int]:
 
 
 def check_and_restart_workers(n: int) -> list[int]:
-    """Check workers and restart any with poor performance. Returns list of restarted worker IDs."""
-    restarted = []
+    """Check workers and restart one with poor performance. Returns list of restarted worker IDs."""
+    # Find worst performing worker that meets restart criteria
+    worst_worker = None
+    worst_rate = 100.0
+    worst_success = 0
+    worst_failed = 0
 
     for i in range(1, n + 1):
         log_file = LOGS_DIR / f"worker_{i}.log"
@@ -224,11 +228,18 @@ def check_and_restart_workers(n: int) -> list[int]:
 
         if total >= restart_threshold:
             rate = (success * 100 / total) if total > 0 else 0.0
-            if rate < min_success_rate:
-                restart_worker(i, success, failed)
-                restarted.append(i)
+            if rate < min_success_rate and rate < worst_rate:
+                worst_worker = i
+                worst_rate = rate
+                worst_success = success
+                worst_failed = failed
 
-    return restarted
+    # Restart only the worst one
+    if worst_worker:
+        restart_worker(worst_worker, worst_success, worst_failed)
+        return [worst_worker]
+
+    return []
 
 
 def display_stats(n: int) -> list[int]:
