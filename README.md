@@ -5,6 +5,9 @@ Distributed web scraping system for Dubai Land Department Trakheesi data using P
 ## Setup
 
 ```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Install dependencies
 uv sync
 
