@@ -314,7 +314,7 @@ async def main():
     if args.log_file:
         log_path = Path(args.log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        sys.stdout = open(log_path, "w", buffering=1)  # Line buffered
+        sys.stdout = open(log_path, "w", encoding="utf-8", buffering=1)  # Line buffered, UTF-8 for emoji
         sys.stderr = sys.stdout
 
     await run_worker(
