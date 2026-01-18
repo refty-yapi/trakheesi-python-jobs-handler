@@ -290,8 +290,8 @@ def display_stats(n: int) -> list[int]:
         rate = (success * 100 / total) if total > 0 else 0.0
         restarts = worker_restarts[idx]
 
-        # Jobs per minute based on total elapsed time
-        jobs_per_min = (total * 60 / elapsed_sec) if elapsed_sec > 0 else 0.0
+        # Successful jobs per minute based on total elapsed time
+        jobs_per_min = (success * 60 / elapsed_sec) if elapsed_sec > 0 else 0.0
 
         # Mark recently restarted workers
         marker = " *" if i in restarted else ""
@@ -305,7 +305,7 @@ def display_stats(n: int) -> list[int]:
 
     grand_total = total_success + total_failed
     grand_rate = (total_success * 100 / grand_total) if grand_total > 0 else 0.0
-    total_jobs_per_min = (grand_total * 60 / elapsed_sec) if elapsed_sec > 0 else 0.0
+    total_jobs_per_min = (total_success * 60 / elapsed_sec) if elapsed_sec > 0 else 0.0
 
     print(f"TOTAL  | {total_success:>7} | {total_failed:>6} | {grand_total:>5} | {grand_rate:>5.1f}% | {total_jobs_per_min:>8.1f} | {total_restarts}")
     print()
