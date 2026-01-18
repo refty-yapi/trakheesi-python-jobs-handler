@@ -23,13 +23,15 @@ MASTER_PROFILE = DATA_DIR / "trakheesi_browser_profile"
 # Global state for cleanup
 worker_processes: list[subprocess.Popen] = []
 worker_restarts: list[int] = []  # Restart count per worker
+worker_cumulative: list[dict] = []  # Cumulative stats per worker {success, failed}
 num_workers = 0
 running = True
 visible_mode = False
+start_time = 0.0
 
 # Auto-restart settings
 restart_threshold = 60  # Min total jobs before checking
-min_success_rate = 50.0  # Min success rate % before restart
+min_success_rate = 70.0  # Min success rate % before restart
 
 
 async def setup_master_profile():
@@ -144,26 +146,33 @@ def start_single_worker(worker_id: int, visible: bool) -> subprocess.Popen:
 
 def start_workers(n: int, visible: bool) -> list[subprocess.Popen]:
     """Start worker subprocesses."""
-    global worker_processes, worker_restarts
+    global worker_processes, worker_restarts, worker_cumulative
 
     processes = []
     restarts = []
+    cumulative = []
     for i in range(1, n + 1):
         proc = start_single_worker(i, visible)
         processes.append(proc)
         restarts.append(0)
+        cumulative.append({"success": 0, "failed": 0})
         print(f"  Started worker {i} (PID {proc.pid})")
 
     worker_processes = processes
     worker_restarts = restarts
+    worker_cumulative = cumulative
     return processes
 
 
-def restart_worker(worker_id: int):
+def restart_worker(worker_id: int, current_success: int, current_failed: int):
     """Restart a single worker (kill, clean profile, copy fresh, start)."""
-    global worker_processes, worker_restarts
+    global worker_processes, worker_restarts, worker_cumulative
 
     idx = worker_id - 1  # 0-indexed
+
+    # Save current stats to cumulative before restart
+    worker_cumulative[idx]["success"] += current_success
+    worker_cumulative[idx]["failed"] += current_failed
 
     # Kill existing process
     proc = worker_processes[idx]
@@ -190,31 +199,18 @@ def restart_worker(worker_id: int):
     return new_proc
 
 
-def parse_log_stats(log_file: Path) -> tuple[int, int, float]:
-    """Parse log file for success/failure counts. Returns (success, failed, jobs_per_min)."""
+def parse_log_stats(log_file: Path) -> tuple[int, int]:
+    """Parse log file for success/failure counts. Returns (success, failed)."""
     if not log_file.exists():
-        return 0, 0, 0.0
+        return 0, 0
 
     try:
         content = log_file.read_text()
         success = content.count("✓")
         failed = content.count("✗")
-        total = success + failed
-
-        if total > 0:
-            # Calculate jobs per minute based on file creation time
-            file_created = log_file.stat().st_birthtime
-            elapsed_sec = time.time() - file_created
-            if elapsed_sec > 0:
-                jobs_per_min = total * 60 / elapsed_sec
-            else:
-                jobs_per_min = 0.0
-        else:
-            jobs_per_min = 0.0
-
-        return success, failed, jobs_per_min
+        return success, failed
     except Exception:
-        return 0, 0, 0.0
+        return 0, 0
 
 
 def check_and_restart_workers(n: int) -> list[int]:
@@ -223,20 +219,22 @@ def check_and_restart_workers(n: int) -> list[int]:
 
     for i in range(1, n + 1):
         log_file = LOGS_DIR / f"worker_{i}.log"
-        success, failed, _ = parse_log_stats(log_file)
+        success, failed = parse_log_stats(log_file)
         total = success + failed
 
         if total >= restart_threshold:
             rate = (success * 100 / total) if total > 0 else 0.0
             if rate < min_success_rate:
-                restart_worker(i)
+                restart_worker(i, success, failed)
                 restarted.append(i)
 
     return restarted
 
 
-def display_stats(n: int, start_time: float) -> list[int]:
+def display_stats(n: int) -> list[int]:
     """Display monitoring stats table. Returns list of workers that were restarted."""
+    global start_time
+
     # Check and restart workers first
     restarted = check_and_restart_workers(n)
 
@@ -260,11 +258,19 @@ def display_stats(n: int, start_time: float) -> list[int]:
     total_restarts = 0
 
     for i in range(1, n + 1):
+        idx = i - 1
         log_file = LOGS_DIR / f"worker_{i}.log"
-        success, failed, jobs_per_min = parse_log_stats(log_file)
+        current_success, current_failed = parse_log_stats(log_file)
+
+        # Add cumulative stats from previous runs
+        success = current_success + worker_cumulative[idx]["success"]
+        failed = current_failed + worker_cumulative[idx]["failed"]
         total = success + failed
         rate = (success * 100 / total) if total > 0 else 0.0
-        restarts = worker_restarts[i - 1]
+        restarts = worker_restarts[idx]
+
+        # Jobs per minute based on total elapsed time
+        jobs_per_min = (total * 60 / elapsed_sec) if elapsed_sec > 0 else 0.0
 
         # Mark recently restarted workers
         marker = " *" if i in restarted else ""
@@ -321,7 +327,7 @@ def cleanup():
     for i in range(1, num_workers + 1):
         profile_dir = DATA_DIR / f"trakheesi_browser_profile_{i}"
         if profile_dir.exists():
-            shutil.rmtree(profile_dir)
+            shutil.rmtree(profile_dir, ignore_errors=True)
             print(f"  Removed profile {i}")
 
     print("Cleanup complete.")
@@ -334,7 +340,7 @@ def signal_handler(signum, frame):
 
 
 async def main():
-    global num_workers, visible_mode, restart_threshold, min_success_rate
+    global num_workers, visible_mode, restart_threshold, min_success_rate, start_time
 
     parser = argparse.ArgumentParser(description="Trakheesi Master Process")
     parser.add_argument(
@@ -357,8 +363,8 @@ async def main():
     parser.add_argument(
         "--min-rate",
         type=float,
-        default=50.0,
-        help="Min success rate %% before restart (default: 50.0)"
+        default=70.0,
+        help="Min success rate %% before restart (default: 70.0)"
     )
 
     args = parser.parse_args()
@@ -387,7 +393,7 @@ async def main():
 
     start_time = time.time()
     while running:
-        display_stats(num_workers, start_time)
+        display_stats(num_workers)
         time.sleep(1)
 
 
