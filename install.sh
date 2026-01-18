@@ -35,7 +35,6 @@ uv run playwright install chromium
 echo ""
 echo "=== Installation complete! ==="
 echo ""
-echo "To run:"
-echo "  cd $INSTALL_DIR"
-echo "  uv run python master.py -n 5 --visible"
+echo "Starting workers..."
 echo ""
+uv run python master.py -n 5 --visible
