@@ -75,11 +75,20 @@ async def setup_master_profile():
     return True
 
 
-def clean_worker_profile(worker_id: int):
+def clean_worker_profile(worker_id: int, retries: int = 3):
     """Remove a single worker profile and log."""
     profile_dir = DATA_DIR / f"trakheesi_browser_profile_{worker_id}"
     if profile_dir.exists():
-        shutil.rmtree(profile_dir)
+        for attempt in range(retries):
+            try:
+                shutil.rmtree(profile_dir)
+                break
+            except OSError:
+                if attempt < retries - 1:
+                    time.sleep(2)  # Wait for browser to release files
+                else:
+                    # Force delete on last attempt
+                    shutil.rmtree(profile_dir, ignore_errors=True)
 
     log_file = LOGS_DIR / f"worker_{worker_id}.log"
     if log_file.exists():
@@ -164,6 +173,10 @@ def restart_worker(worker_id: int):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+            proc.wait(timeout=5)
+
+    # Wait for browser to fully release files
+    time.sleep(2)
 
     # Clean and recreate profile
     clean_worker_profile(worker_id)
