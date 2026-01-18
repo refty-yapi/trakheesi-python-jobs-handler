@@ -6,6 +6,7 @@ Reuses browser instance for efficiency.
 import asyncio
 import json
 import shutil
+import sys
 import httpx
 from playwright.async_api import async_playwright, Page, BrowserContext
 from playwright_stealth import Stealth
@@ -16,6 +17,7 @@ RESULTS_API = "https://jobs-api.refty.ai/trakheesi/job/result"
 # Persistent browser profile directory
 from pathlib import Path
 BASE_PROFILE_DIR = Path(__file__).parent / "data" / "trakheesi_browser_profile"
+
 
 
 def get_profile_dir(worker_id: int | None) -> Path:
@@ -299,8 +301,19 @@ async def main():
         default=None,
         help="Worker ID for parallel execution (creates separate profile copy)"
     )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Log file path (redirects stdout)"
+    )
 
     args = parser.parse_args()
+
+    # Redirect stdout to log file if specified
+    if args.log_file:
+        sys.stdout = open(args.log_file, "w", buffering=1)  # Line buffered
+        sys.stderr = sys.stdout
 
     await run_worker(
         poll_interval=args.interval,

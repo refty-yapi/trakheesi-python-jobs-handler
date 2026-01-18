@@ -22,7 +22,6 @@ MASTER_PROFILE = DATA_DIR / "trakheesi_browser_profile"
 
 # Global state for cleanup
 worker_processes: list[subprocess.Popen] = []
-worker_log_files: list = []  # Keep file handles open
 worker_restarts: list[int] = []  # Restart count per worker
 worker_cumulative: list[dict] = []  # Cumulative stats per worker {success, failed}
 num_workers = 0
@@ -121,8 +120,8 @@ def create_worker_profiles(n: int):
         create_worker_profile(i)
 
 
-def start_single_worker(worker_id: int, visible: bool) -> tuple[subprocess.Popen, any]:
-    """Start a single worker subprocess. Returns (process, log_file_handle)."""
+def start_single_worker(worker_id: int, visible: bool) -> subprocess.Popen:
+    """Start a single worker subprocess."""
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
     log_file = LOGS_DIR / f"worker_{worker_id}.log"
@@ -131,39 +130,35 @@ def start_single_worker(worker_id: int, visible: bool) -> tuple[subprocess.Popen
         str(SCRIPT_DIR / "trakheesi_worker.py"),
         "--profile",
         "--worker-id", str(worker_id),
+        "--log-file", str(log_file),
     ]
     if visible:
         cmd.append("--visible")
 
-    # Keep file handle open for subprocess lifetime
-    f = open(log_file, "w")
     proc = subprocess.Popen(
         cmd,
-        stdout=f,
-        stderr=subprocess.STDOUT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         cwd=str(SCRIPT_DIR),
     )
-    return proc, f
+    return proc
 
 
 def start_workers(n: int, visible: bool) -> list[subprocess.Popen]:
     """Start worker subprocesses."""
-    global worker_processes, worker_log_files, worker_restarts, worker_cumulative
+    global worker_processes, worker_restarts, worker_cumulative
 
     processes = []
-    log_files = []
     restarts = []
     cumulative = []
     for i in range(1, n + 1):
-        proc, log_handle = start_single_worker(i, visible)
+        proc = start_single_worker(i, visible)
         processes.append(proc)
-        log_files.append(log_handle)
         restarts.append(0)
         cumulative.append({"success": 0, "failed": 0})
         print(f"  Started worker {i} (PID {proc.pid})")
 
     worker_processes = processes
-    worker_log_files = log_files
     worker_restarts = restarts
     worker_cumulative = cumulative
     return processes
@@ -171,7 +166,7 @@ def start_workers(n: int, visible: bool) -> list[subprocess.Popen]:
 
 def restart_worker(worker_id: int, current_success: int, current_failed: int):
     """Restart a single worker (kill, clean profile, copy fresh, start)."""
-    global worker_processes, worker_log_files, worker_restarts, worker_cumulative
+    global worker_processes, worker_restarts, worker_cumulative
 
     idx = worker_id - 1  # 0-indexed
 
@@ -189,10 +184,6 @@ def restart_worker(worker_id: int, current_success: int, current_failed: int):
             proc.kill()
             proc.wait(timeout=5)
 
-    # Close old log file handle
-    if worker_log_files[idx]:
-        worker_log_files[idx].close()
-
     # Wait for browser to fully release files
     time.sleep(2)
 
@@ -201,9 +192,8 @@ def restart_worker(worker_id: int, current_success: int, current_failed: int):
     create_worker_profile(worker_id)
 
     # Start new process
-    new_proc, new_log = start_single_worker(worker_id, visible_mode)
+    new_proc = start_single_worker(worker_id, visible_mode)
     worker_processes[idx] = new_proc
-    worker_log_files[idx] = new_log
     worker_restarts[idx] += 1
 
     return new_proc
@@ -314,7 +304,7 @@ def display_stats(n: int) -> list[int]:
 
 def cleanup():
     """Kill workers and remove worker profiles."""
-    global running, worker_processes, worker_log_files, num_workers
+    global running, worker_processes, num_workers
 
     running = False
     print("\n\nShutting down...")
@@ -331,11 +321,6 @@ def cleanup():
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-
-    # Close log file handles
-    for f in worker_log_files:
-        if f:
-            f.close()
 
     # Remove worker profiles
     print("Removing worker profiles...")
