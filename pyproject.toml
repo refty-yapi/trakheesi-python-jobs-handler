@@ -1,0 +1,11 @@
+[project]
+name = "trakhesi-playwright"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "httpx>=0.28.1",
+    "playwright>=1.57.0",
+    "playwright-stealth>=2.0.1",
+]
