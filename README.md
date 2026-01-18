@@ -40,8 +40,8 @@ On first run, if no browser profile exists, a Chromium window will open. You can
 |--------|-------------|
 | `-n N`, `--workers N` | Number of workers (default: 5) |
 | `--visible` | Show browser windows |
-| `--restart-threshold N` | Min total jobs before checking restart (default: 100) |
-| `--min-rate N` | Min success rate % before restart (default: 80.0) |
+| `--restart-threshold N` | Min total jobs before checking restart (default: 60) |
+| `--min-rate N` | Min success rate % before restart (default: 50.0) |
 
 ### Auto-Restart
 
@@ -58,7 +58,7 @@ The master process displays a live stats table:
 ```
 === Trakheesi Master ===
 Time: 17:30:00  |  Elapsed: 5m 30s
-Auto-restart: total >= 100 AND rate < 80.0%
+Auto-restart: total >= 60 AND rate < 50.0%
 
 Worker | Success | Failed | Total | Rate   | Jobs/min | Restarts
 -------|---------|--------|-------|--------|----------|----------

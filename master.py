@@ -28,8 +28,8 @@ running = True
 visible_mode = False
 
 # Auto-restart settings
-restart_threshold = 100  # Min total jobs before checking
-min_success_rate = 80.0  # Min success rate % before restart
+restart_threshold = 60  # Min total jobs before checking
+min_success_rate = 50.0  # Min success rate % before restart
 
 
 async def setup_master_profile():
@@ -338,14 +338,14 @@ async def main():
     parser.add_argument(
         "--restart-threshold",
         type=int,
-        default=100,
-        help="Min total jobs before checking for restart (default: 100)"
+        default=60,
+        help="Min total jobs before checking for restart (default: 60)"
     )
     parser.add_argument(
         "--min-rate",
         type=float,
-        default=80.0,
-        help="Min success rate %% before restart (default: 80.0)"
+        default=50.0,
+        help="Min success rate %% before restart (default: 50.0)"
     )
 
     args = parser.parse_args()
