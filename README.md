@@ -17,17 +17,17 @@ uv run playwright install chromium
 
 ## Usage
 
-### Quick Start (Recommended)
+### Quick Start
 
 ```bash
-# Run 5 workers with live monitoring
-uv run python master.py
+# Recommended: 5 workers with visible browsers
+uv run python master.py -n 5 --visible
 
-# Run with visible browser windows
-uv run python master.py --visible
+# Headless mode (no browser windows)
+uv run python master.py -n 5
 
-# Run 3 workers
-uv run python master.py -n 3
+# Custom number of workers
+uv run python master.py -n 3 --visible
 ```
 
 ### First Run
