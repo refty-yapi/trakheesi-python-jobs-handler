@@ -99,7 +99,7 @@ async def scrape_listing(page: Page, listing_guid: str) -> dict | None:
     return api_response_data
 
 
-async def run_worker(poll_interval: int = 5, headless: bool = True, browser_type: str = "chromium", restart_every: int = 5, use_profile: bool = False, worker_id: int | None = None):
+async def run_worker(poll_interval: int = 5, headless: bool = True, browser_type: str = "chromium", restart_every: int = 5, use_profile: bool = False, worker_id: int | None = None, window_position: str | None = None):
     """Main worker loop."""
     restart_msg = f"restart every {restart_every}" if restart_every > 0 else "no restart"
     profile_msg = f"profile #{worker_id}" if use_profile and worker_id else ("with profile" if use_profile else "no profile")
@@ -136,6 +136,8 @@ async def run_worker(poll_interval: int = 5, headless: bool = True, browser_type
                     "--no-default-browser-check",
                     "--window-size=1280,800",
                 ]
+                if window_position:
+                    browser_args.append(f"--window-position={window_position}")
 
             # Get profile directory for this worker
             profile_dir = get_profile_dir(worker_id) if use_profile else None
@@ -307,6 +309,12 @@ async def main():
         default=None,
         help="Log file path (redirects stdout)"
     )
+    parser.add_argument(
+        "--window-position",
+        type=str,
+        default=None,
+        help="Window position as X,Y (e.g. 1920,0 for second monitor)"
+    )
 
     args = parser.parse_args()
 
@@ -323,7 +331,8 @@ async def main():
         browser_type=args.browser,
         restart_every=args.restart_every,
         use_profile=args.profile,
-        worker_id=args.worker_id
+        worker_id=args.worker_id,
+        window_position=args.window_position,
     )
 
 

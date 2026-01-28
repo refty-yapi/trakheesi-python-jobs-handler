@@ -12,6 +12,8 @@ import sys
 import time
 from pathlib import Path
 
+import psutil
+
 from playwright.async_api import async_playwright
 
 # Directories
@@ -27,6 +29,7 @@ worker_cumulative: list[dict] = []  # Cumulative stats per worker {success, fail
 num_workers = 0
 running = True
 visible_mode = False
+window_position = None
 start_time = 0.0
 
 # Auto-restart settings
@@ -115,6 +118,18 @@ def clean_worker_profiles(n: int):
 def create_worker_profile(worker_id: int):
     """Copy master profile to a single worker profile."""
     worker_profile = DATA_DIR / f"trakheesi_browser_profile_{worker_id}"
+    if worker_profile.exists():
+        # Retry rmtree with delays - Windows may hold file locks briefly after process death
+        for attempt in range(3):
+            try:
+                shutil.rmtree(worker_profile)
+                break
+            except PermissionError:
+                if attempt < 2:
+                    time.sleep(2)
+                else:
+                    # Last attempt - force ignore errors
+                    shutil.rmtree(worker_profile, ignore_errors=True)
     shutil.copytree(MASTER_PROFILE, worker_profile)
 
 
@@ -141,6 +156,8 @@ def start_single_worker(worker_id: int, visible: bool) -> subprocess.Popen:
     ]
     if visible:
         cmd.append("--visible")
+    if window_position:
+        cmd.extend(["--window-position", window_position])
 
     proc = subprocess.Popen(
         cmd,
@@ -181,21 +198,34 @@ def restart_worker(worker_id: int, current_success: int, current_failed: int):
     worker_cumulative[idx]["success"] += current_success
     worker_cumulative[idx]["failed"] += current_failed
 
-    # Kill existing process
+    # Kill existing process and all its children (browser processes)
     proc = worker_processes[idx]
     if proc.poll() is None:
-        proc.terminate()
         try:
+            parent = psutil.Process(proc.pid)
+            children = parent.children(recursive=True)
+            # Kill children first (browser processes)
+            for child in children:
+                try:
+                    child.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            # Then kill parent
+            parent.kill()
             proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        except (psutil.NoSuchProcess, subprocess.TimeoutExpired):
+            # Process already dead or stuck, try force kill via taskkill
             try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass  # Process may be stuck, continue anyway
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    timeout=5
+                )
+            except Exception:
+                pass
 
     # Wait for browser and files to be fully released (longer on Windows)
-    time.sleep(3)
+    time.sleep(5)
 
     # Clean and recreate profile
     clean_worker_profile(worker_id)
@@ -330,18 +360,36 @@ def cleanup():
     running = False
     print("\n\nShutting down...")
 
-    # Kill worker processes
+    # Kill worker processes and all their children (browser processes)
     for proc in worker_processes:
         if proc.poll() is None:
-            print(f"  Killing worker PID {proc.pid}...")
-            proc.terminate()
+            print(f"  Killing worker PID {proc.pid} and children...")
+            try:
+                parent = psutil.Process(proc.pid)
+                children = parent.children(recursive=True)
+                for child in children:
+                    try:
+                        child.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+                parent.kill()
+            except psutil.NoSuchProcess:
+                pass
 
     # Wait for processes to terminate
     for proc in worker_processes:
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            # Force kill via taskkill if still stuck
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    timeout=5
+                )
+            except Exception:
+                pass
 
     # Remove worker profiles
     print("Removing worker profiles...")
@@ -361,7 +409,7 @@ def signal_handler(signum, frame):
 
 
 async def main():
-    global num_workers, visible_mode, restart_threshold, min_success_rate, start_time
+    global num_workers, visible_mode, window_position, restart_threshold, min_success_rate, start_time
 
     parser = argparse.ArgumentParser(description="Trakheesi Master Process")
     parser.add_argument(
@@ -387,10 +435,17 @@ async def main():
         default=75.0,
         help="Min success rate %% before restart (default: 75.0)"
     )
+    parser.add_argument(
+        "--window-position",
+        type=str,
+        default=None,
+        help="Window position as X,Y for all workers (e.g. 1920,0 for second monitor on the right)"
+    )
 
     args = parser.parse_args()
     num_workers = args.workers
     visible_mode = args.visible
+    window_position = args.window_position
     restart_threshold = args.restart_threshold
     min_success_rate = args.min_rate
 
